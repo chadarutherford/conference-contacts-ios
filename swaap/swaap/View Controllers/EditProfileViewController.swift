@@ -172,26 +172,14 @@ class EditProfileViewController: UIViewController, ProfileAccessor {
 		self.view.addSubview(panel)
 		panel.beginAnimation()
 
-		let imageUpdate = ConcurrentOperation { [weak self] in
-			guard let self = self else { return }
-			if let imageData = self.newPhoto?.jpegData(compressionQuality: 0.75) {
-				if imageData != self.profileController?.userProfile?.photoData {
-					let semaphore = DispatchSemaphore(value: 0)
-					self.profileController?.uploadImageData(imageData, completion: { (result: Result<URL, NetworkError>) in
-						switch result {
-						case .success(let url):
-							newProfile.pictureURL = url
-						case .failure(let error):
-							NSLog("Error uploading image: \(error)")
-						}
-						semaphore.signal()
-					})
-					semaphore.wait()
-				}
+		var imageUpdate: ImageUpdateOperation?
+		if let imageData = self.newPhoto?.jpegData(compressionQuality: 0.75) {
+			if imageData != profileController?.userProfile?.photoData {
+				imageUpdate = ImageUpdateOperation(profileController: profileController, imageData: imageData)
 			}
 		}
 
-		let profileUpdate = profileUpdateOperation(newProfile: newProfile)
+		let profileUpdate = profileUpdateOperation(newProfile: newProfile, imageUpdateOperation: imageUpdate)
 
 		let profileRefresh = profileRefreshOperation()
 
@@ -209,7 +197,16 @@ class EditProfileViewController: UIViewController, ProfileAccessor {
 			self?.dismiss(animated: true)
 		}
 
-		profileUpdate.addDependency(imageUpdate)
+		var operationList = [profileUpdate,
+							 profileRefresh,
+							 createContactMethods,
+							 updateContactMethods,
+							 deleteContactMethods]
+
+		if let imageUpdate = imageUpdate {
+			profileUpdate.addDependency(imageUpdate)
+			operationList.insert(imageUpdate, at: 0)
+		}
 		profileRefresh.addDependency(createContactMethods)
 		profileRefresh.addDependency(profileUpdate)
 		profileRefresh.addDependency(updateContactMethods)
@@ -217,12 +214,7 @@ class EditProfileViewController: UIViewController, ProfileAccessor {
 		dismissSelf.addDependency(profileRefresh)
 
 		let queue = OperationQueue()
-		queue.addOperations([profileUpdate,
-							 profileRefresh,
-							 imageUpdate,
-							 createContactMethods,
-							 updateContactMethods,
-							 deleteContactMethods],
+		queue.addOperations(operationList,
 							waitUntilFinished: false)
 		OperationQueue.main.addOperation(dismissSelf)
 
@@ -232,7 +224,7 @@ class EditProfileViewController: UIViewController, ProfileAccessor {
 
 	// MARK: Saving Helpers
 	private func concurrentCompletion(with semaphore: DispatchSemaphore) -> (Result<GQLMutationResponse, NetworkError>) -> Void {
-		return { (result: Result<GQLMutationResponse, NetworkError>) -> Void in
+		let closure = { (result: Result<GQLMutationResponse, NetworkError>) -> Void in
 			switch result {
 			case .success:
 				break
@@ -241,12 +233,17 @@ class EditProfileViewController: UIViewController, ProfileAccessor {
 			}
 			semaphore.signal()
 		}
+		return closure
 	}
 
-	private func profileUpdateOperation(newProfile: UserProfile) -> ConcurrentOperation {
+	private func profileUpdateOperation(newProfile: UserProfile, imageUpdateOperation: ImageUpdateOperation?) -> ConcurrentOperation {
 		let semaphore = DispatchSemaphore(value: 0)
 		let completion = concurrentCompletion(with: semaphore)
 		let profileUpdate = ConcurrentOperation { [weak self] in
+			var newProfile = newProfile
+			if let imageOp = imageUpdateOperation, let imageURL = imageOp.updatedImageURL {
+				newProfile.pictureURL = imageURL
+			}
 			self?.profileController?.updateProfile(newProfile, completion: completion)
 			semaphore.wait()
 			print("profile update finished")
@@ -485,6 +482,9 @@ extension EditProfileViewController: ContactMethodCellViewDelegate {
 	}
 
 	func privacySelectionInvoked(on cellView: ContactMethodCellView) {
+		let eyeImage = UIImage(systemName: "eye")
+		let eyeSlash = UIImage(systemName: "eye.slash")
+		let connectedImage = UIImage(systemName: "checkmark")
 		let privateStr = NSMutableAttributedString(string: "Private",
 												   attributes: [.font: UIFont.systemFont(ofSize: 16, weight: .bold)])
 		let connectedStr = NSMutableAttributedString(string: "Connected",
@@ -517,6 +517,8 @@ extension EditProfileViewController: ContactMethodCellViewDelegate {
 			}
 			cellView.contactMethod.privacy = .private
 		}
+		privateAction.setValue(eyeSlash, forKey: "image")
+
 		let connectedAction = UIAlertAction(title: "Connected", style: .default) { _ in
 			guard !cellView.contactMethod.preferredContact else {
 				self.showAlert(titled: "Privacy Notice", message: "Preferred contact must be public.")
@@ -524,9 +526,13 @@ extension EditProfileViewController: ContactMethodCellViewDelegate {
 			}
 			cellView.contactMethod.privacy = .connected
 		}
+		connectedAction.setValue(connectedImage, forKey: "image")
+
 		let publicAction = UIAlertAction(title: "Public", style: .default) { _ in
 			cellView.contactMethod.privacy = .public
 		}
+		publicAction.setValue(eyeImage, forKey: "image")
+
 		let cancel = UIAlertAction(title: "Cancel", style: .cancel)
 		[privateAction, connectedAction, publicAction, cancel].forEach { privacyAlert.addAction($0) }
 		present(privacyAlert, animated: true)

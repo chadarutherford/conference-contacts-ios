@@ -10,6 +10,7 @@
 import Foundation
 import NetworkHandler
 import Cloudinary
+import CoreLocation
 
 protocol ProfileAccessor: AnyObject {
 	var profileController: ProfileController? { get set }
@@ -17,6 +18,7 @@ protocol ProfileAccessor: AnyObject {
 
 class ProfileController {
 	let authManager: AuthManager
+	let locationManager = LocationHandler()
 
 	/// Automatically sends `userProfileChanged` (all events), `userProfilePopulated` (when nil -> value),
 	/// `userProfileDepopulated` (value -> nil), or `userProfileModified` (value -> value) notifications when modified
@@ -26,10 +28,24 @@ class ProfileController {
 		}
 	}
 
-	let baseURL = URL(string: "https://lambda-labs-swaap-staging.herokuapp.com/")!
+	/// Uses staging backend with debugging and testflight, but use production when a live app store release
+	let apiBaseURL: URL = {
+		if ReleaseState.current == .appStore {
+			return URL(string: "https://lambda-labs-swaap.herokuapp.com/")!
+		} else {
+			return URL(string: "https://lambda-labs-swaap-staging.herokuapp.com/")!
+		}
+	}()
 	var graphqlURL: URL {
-		baseURL.appendingPathComponent("graphql")
+		apiBaseURL.appendingPathComponent("graphql")
 	}
+	let liveSiteBaseURL: URL = {
+		if ReleaseState.current == .appStore {
+			return URL(string: "https://swaap.co/")!
+		} else {
+			return URL(string: "https://staging.swaap.co/")!
+		}
+	}()
 	let networkHandler: NetworkHandler = {
 		let networkHandler = NetworkHandler()
 		networkHandler.graphQLErrorSupport = true
@@ -66,6 +82,10 @@ class ProfileController {
 				}
 			}
 		}
+
+		locationManager.delegate = self
+		locationManager.requestAuth()
+		locationManager.singleLocationRequest()
 	}
 
 	// MARK: - Networking
@@ -359,11 +379,11 @@ class ProfileController {
 		}
 	}
 
-	private func networkAuthRequestCommon() -> NetworkRequest? {
-		return authManager.networkAuthRequestCommon(for: graphqlURL)
-	}
+	private func networkAuthRequestCommon() -> NetworkRequest? { authManager.networkAuthRequestCommon(for: graphqlURL) }
 
-	func fetchImage(url: URL, session: NetworkLoader = URLSession.shared, completion: @escaping (Result<Data, NetworkError>) -> Void) {
+	@discardableResult func fetchImage(url: URL,
+									   session: NetworkLoader = URLSession.shared,
+									   completion: @escaping (Result<Data, NetworkError>) -> Void) -> URLSessionDataTask? {
 		networkHandler.transferMahDatas(with: url.request, usingCache: true, session: session, completion: completion)
 	}
 
@@ -471,6 +491,12 @@ class ProfileController {
 		} catch {
 			NSLog("Error deleting profile cache: \(error)")
 		}
+	}
+}
+
+extension ProfileController: LocationHandlerDelegate {
+	func locationRequester(_ locationRequester: LocationHandler, didUpdateLocation location: CLLocation) {
+		print(location)
 	}
 }
 

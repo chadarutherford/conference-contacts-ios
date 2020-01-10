@@ -10,11 +10,51 @@
 
 import Foundation
 import CoreData
+import CoreLocation
+
+enum ContactPendingStatus: Int16 {
+	case pendingSent
+	case pendingReceived
+	case connected
+
+	init(with value: Int16) {
+		switch value {
+		case 0:
+			self = .pendingSent
+		case 1:
+			self = .pendingReceived
+		default:
+			self = .connected
+		}
+	}
+}
+
+struct MeetingCoordinate {
+	let coordinate: CLLocationCoordinate2D
+	let distance: CLLocationDistance
+
+	init?(coordinate: CLLocationCoordinate2D?, dist: Double?) {
+		guard let coordinate = coordinate, let dist = dist else { return nil }
+		guard dist >= 0 else { return nil }
+		self.coordinate = coordinate
+		distance = dist
+	}
+}
 
 extension ConnectionContact {
+	var contactProfile: UserProfile? {
+		UserProfile(from: self)
+	}
+
+	var meetingCoordinate: MeetingCoordinate? {
+		MeetingCoordinate(coordinate: CLLocationCoordinate2D(latitude: meetingLat, longitude: meetingLong), dist: meetingDistance)
+	}
+
 	private convenience init(id: String,
 							 authID: String?,
 							 name: String,
+							 connectionStatus: Int16,
+							 connectionID: String,
 							 pictureURL: URL,
 							 birthdate: String?,
 							 location: String?,
@@ -22,12 +62,15 @@ extension ConnectionContact {
 							 jobTitle: String?,
 							 tagline: String?,
 							 bio: String?,
+							 meetingCoordinate: MeetingCoordinate?,
 							 connectionMethods: [ConnectionContactMethod],
 							 context: NSManagedObjectContext) {
 		self.init(context: context)
 		self.id = id
 		self.authID = authID
 		self.name = name
+		self.connectionStatus = connectionStatus
+		self.connectionID = connectionID
 		self.pictureURL = pictureURL
 		self.birthdate = birthdate
 		self.location = location
@@ -35,15 +78,26 @@ extension ConnectionContact {
 		self.jobTitle = jobTitle
 		self.tagline = tagline
 		self.bio = bio
+		if let meetingCoordinate = meetingCoordinate {
+			self.meetingLat = meetingCoordinate.coordinate.latitude
+			self.meetingLong = meetingCoordinate.coordinate.longitude
+			self.meetingDistance = meetingCoordinate.distance
+		}
 		let profileConnectionMethods = NSOrderedSet(array: connectionMethods)
 		addToProfileContactMethods(profileConnectionMethods)
 	}
 
-	convenience init(connectionProfile: UserProfile, context: NSManagedObjectContext) {
+	convenience init(connectionProfile: UserProfile,
+					 connectionStatus: ContactPendingStatus,
+					 connectionID: String,
+					 meetingCoordinate: MeetingCoordinate?,
+					 context: NSManagedObjectContext) {
 		let connectionMethods = connectionProfile.profileContactMethods.map { ConnectionContactMethod(profileContactMethod: $0, context: context) }
 		self.init(id: connectionProfile.id,
 				  authID: connectionProfile.authID,
 				  name: connectionProfile.name,
+				  connectionStatus: connectionStatus.rawValue,
+				  connectionID: connectionID,
 				  pictureURL: connectionProfile.pictureURL,
 				  birthdate: connectionProfile.birthdate,
 				  location: connectionProfile.location,
@@ -51,11 +105,12 @@ extension ConnectionContact {
 				  jobTitle: connectionProfile.jobTitle,
 				  tagline: connectionProfile.tagline,
 				  bio: connectionProfile.bio,
+				  meetingCoordinate: meetingCoordinate,
 				  connectionMethods: connectionMethods,
 				  context: context)
 	}
 
-	func updateFromProfile(_ userProfile: UserProfile) {
+	func updateFromProfile(_ userProfile: UserProfile, connectionStatus: ContactPendingStatus, connectionID: String, meetingCoordinate: MeetingCoordinate?) {
 		guard userProfile.id == id else { return }
 		authID = userProfile.authID
 		name = userProfile.name
@@ -66,6 +121,13 @@ extension ConnectionContact {
 		jobTitle = userProfile.jobTitle
 		tagline = userProfile.tagline
 		bio = userProfile.bio
+		if let meetingCoordinate = meetingCoordinate {
+			self.meetingLat = meetingCoordinate.coordinate.latitude
+			self.meetingLong = meetingCoordinate.coordinate.longitude
+			self.meetingDistance = meetingCoordinate.distance
+		}
+		self.connectionStatus = connectionStatus.rawValue
+		self.connectionID = connectionID
 
 		if let existingContactMethods = profileContactMethods {
 			removeFromProfileContactMethods(existingContactMethods)

@@ -5,7 +5,7 @@
 //  Created by Marlon Raskin on 11/11/19.
 //  Copyright © 2019 swaap. All rights reserved.
 //
-//swiftlint:disable force_try large_tuple
+//swiftlint:disable large_tuple
 
 import XCTest
 @testable import swaap
@@ -211,7 +211,7 @@ class SwaapTests: XCTestCase {
 		}
 	}
 
-	// FIXME: setup mocking
+	// FIXME: setup mocking - i think this fails because the jwt is too old (mocking would fix)
 	func testFetchAllConnections() {
 		let contactController = getContactController()
 
